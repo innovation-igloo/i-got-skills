@@ -76,7 +76,7 @@ description: "What it does + trigger phrases"
 ---
 ```
 
-Keep skills under 500 lines. Use `⚠️ MANDATORY STOPPING POINT` to gate user approval before generating or modifying anything.
+Use `⚠️ MANDATORY STOPPING POINT` to gate user approval before generating or modifying anything.
 
 ---
 

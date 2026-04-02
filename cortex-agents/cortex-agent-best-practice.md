@@ -87,52 +87,145 @@ Wait for explicit approval. Append approved block to `agent-config.md` under `##
 
 ## Module 2: Tool Mapping
 
-**Key principle:** Your agent needs exactly the tools required to answer its scoped questions — no more. Match each question type to the right Cortex capability: structured data → Cortex Analyst, documents/text → Cortex Search, actions/writes → Custom Tool.
+**Key principle:** Your agent needs exactly the tools required to answer its scoped questions — no more. Start from the Snowflake objects you already have, then layer in Cortex Search and custom tools as needed. Inspecting each object now builds the context you'll need for tool descriptions in Module 5.
 
-**Ask the user:**
+### Step 2a: Semantic Views (Cortex Analyst)
 
 ```
 Module 2 of 6: Tool Mapping
 
-I'll display your 5 example questions. For each one, tell me:
-- What data source would answer it? (a table? a document? an external system?)
-- Is it structured data, unstructured text, or an action?
+Let's start with your structured data.
 
-{display questions from Module 1}
-
-Also: Do any questions require chaining multiple sources together?
+1. What semantic view(s) will this agent use?
+   For each one, provide the fully qualified name: DATABASE.SCHEMA.VIEW_NAME
 ```
 
-**⚠️ MANDATORY STOPPING POINT** — wait for user responses.
+**⚠️ MANDATORY STOPPING POINT** — wait for user response.
 
-**After receiving answers**, categorize each into:
-- **Cortex Analyst** — structured tables, SQL-answerable metrics
-- **Cortex Search** — documents, PDFs, unstructured text, semantic retrieval
-- **Custom Tool** — external API calls, writes, lookups not in Snowflake
+**For each semantic view named**, immediately inspect it:
 
-For each tool, generate a draft name using the `[Domain][Function]` pattern:
+```sql
+SELECT GET_DDL('semantic_view', '<DATABASE>.<SCHEMA>.<VIEW_NAME>');
+```
+
+Read the output and extract:
+- Entities and their source tables
+- Dimensions (categorical columns)
+- Metrics (numeric measures)
+- Time dimensions
+- Any relationships between entities
+
+Summarize findings to the user:
+```
+I found the following in <VIEW_NAME>:
+- Entities: {list}
+- Key metrics: {list}
+- Key dimensions: {list}
+- Date range / time dimension: {field}
+```
+
+Store this summary — it will be used to pre-populate the tool description in Module 5.
+
+Generate a tool name using the `[Domain][Function]` pattern and confirm with the user:
 
 ```
 ✅ CustomerConsumptionAnalytics   ← domain + function, unambiguous
-✅ ProductDocumentationSearch
-✅ SalesforcePipelineQuery
-❌ DataTool  ❌ Query  ❌ Docs     ← too generic, avoid these
+✅ SalesPipelineAnalytics
+❌ DataTool  ❌ Query  ❌ MyView   ← too generic, avoid these
 ```
 
-Generate the tool inventory block and show it:
+### Step 2b: Cortex Search Services (optional)
 
-```markdown
-## Tool Inventory
+```
+Do you plan to use a Cortex Search service?
+(e.g., for searching documents, PDFs, support tickets, knowledge bases)
 
-| Tool Name | Type | Answers Questions About |
-|---|---|---|
-| {ToolName} | Cortex Analyst | {topic} |
-| {ToolName} | Cortex Search | {topic} |
+Yes / No
+```
+
+**If Yes:**
+
+```
+What is the fully qualified name of your Cortex Search service?
+DATABASE.SCHEMA.SERVICE_NAME
+```
+
+**⚠️ STOP** — wait for name, then inspect:
+
+```sql
+DESCRIBE CORTEX SEARCH SERVICE <DATABASE>.<SCHEMA>.<SERVICE_NAME>;
+```
+
+Extract and summarize:
+- Source table and indexed column(s)
+- Available filter columns
+- What content it searches (infer from column names + table name)
+
+Store summary for Module 5. Generate tool name using `[Domain]Search` pattern (e.g., `ProductDocumentationSearch`, `SupportTicketSearch`).
+
+**If No:** skip to Step 2c.
+
+### Step 2c: Custom Tools (optional)
+
+```
+Do you plan to use any custom tools?
+(e.g., stored procedures, UDFs, or external API lookups)
+
+Yes / No
+```
+
+**If Yes:**
+
+```
+For each custom tool, provide:
+1. The fully qualified procedure or function name
+2. What action it performs
+```
+
+**⚠️ STOP** — wait for response, then inspect each:
+
+```sql
+-- For stored procedures:
+DESCRIBE PROCEDURE <DATABASE>.<SCHEMA>.<NAME>(<ARG_TYPES>);
+
+-- For UDFs:
+DESCRIBE FUNCTION <DATABASE>.<SCHEMA>.<NAME>(<ARG_TYPES>);
+```
+
+Extract signature, argument names/types, and return type. Store for Module 5.
+
+**If No:** skip to Step 2d.
+
+### Step 2d: Coverage Check
+
+Display the tool inventory alongside the 5 example questions from Module 1:
+
+```
+Here's your tool inventory:
+{table of tools}
+
+Your example questions from Module 1:
+{list}
+
+Does each question have a tool that can answer it?
+Any gaps — questions no tool currently covers?
 ```
 
 **⚠️ MANDATORY CHECKPOINT** — ask: "Does this tool inventory look right? Any tools to add, remove, or rename?"
 
-Wait for explicit approval. Append approved block to `agent-config.md` under `## Tool Inventory`. Proceed to Module 3.
+Wait for explicit approval. Append approved block to `agent-config.md` under `## Tool Inventory`:
+
+```markdown
+## Tool Inventory
+
+| Tool Name | Type | Covers |
+|---|---|---|
+| {ToolName} | Cortex Analyst | {summary from inspection} |
+| {ToolName} | Cortex Search | {summary from inspection} |
+| {ToolName} | Custom Tool | {summary from inspection} |
+```
+
+Proceed to Module 3.
 
 ---
 
@@ -303,36 +396,47 @@ Append approved block to `agent-config.md`. Proceed to Module 5.
 
 **Key principle:** Tool descriptions are the #1 cause of agent quality failures. Agents select tools based on name and description alone — they cannot inspect your data model. A vague description cascades into wrong tool calls, bad inputs, and hallucinations. Every description must answer: *What does it do? What data does it cover? When should I call it? When should I NOT call it?*
 
-**For each tool in your inventory, run this prompt (one tool at a time):**
+**For each tool in your inventory, run this prompt (one tool at a time).**
+
+First, display what was learned during Module 2 inspection:
+
+```
+Working on: {Tool Name}
+
+From my inspection of {object name}, I found:
+{summary captured in Module 2 — entities/metrics/dimensions or indexed columns}
+
+I'll use this to pre-populate the description. A few gaps to fill:
+```
+
+Then ask only what the inspection couldn't answer:
 
 ```
 Module 5 of 6: Tool Description — {Tool Name}
 
-1. What data does this tool have access to?
-   (tables, date range, refresh cadence, customer scope)
+1. Give 3 example questions this tool should handle.
+   (I'll use these for the "When to Use" section)
 
-2. Give 3 example questions this tool should handle.
-
-3. Give 3 question types this tool should NOT handle.
+2. Give 3 question types this tool should NOT handle.
    For each: which other tool should handle it instead?
 
-4. Does this tool require specific parameter formats?
-   (e.g., customer IDs, date formats, metric names)
-   If IDs are required: how should the agent obtain them?
+3. Are there required parameter formats the agent needs to know?
+   (e.g., customer IDs must come from a lookup first, date format must be ISO 8601)
 ```
 
 **⚠️ MANDATORY STOPPING POINT** per tool — wait for user responses before generating.
 
-**Generate description block using this structure:**
+**Generate description block** using inspection output + user answers:
 
 ```
 Name: {ToolName}
 
-Description: {what it does} + {data it accesses}
+Description: {what it does} + {data it accesses — from inspection summary}
 
 Data Coverage:
-- {scope of data, e.g. "Daily aggregated metrics for all commercial accounts"}
-- {date range, e.g. "Past 2 years, updated nightly"}
+- {source table/entity — from inspection}
+- {key metrics or indexed columns — from inspection}
+- {date range or refresh cadence — from inspection or user}
 
 When to Use:
 - {scenario 1 from user answers}
