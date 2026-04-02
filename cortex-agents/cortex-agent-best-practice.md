@@ -5,6 +5,8 @@ description: "Interactive build guide for production-quality Cortex Agents. Walk
 
 # Cortex Agent Best Practices — Interactive Build Guide
 
+> This skill is based on Snowflake's official guide: [Best Practices for Building Cortex Agents](https://www.snowflake.com/en/developers/guides/best-practices-to-building-cortex-agents/)
+
 ## Setup
 
 On load:
